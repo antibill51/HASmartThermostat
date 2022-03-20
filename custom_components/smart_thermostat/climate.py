@@ -83,6 +83,7 @@ DEFAULT_PRESET_SYNC_MODE = "none"
 CONF_HEATER = "heater"
 CONF_INVERT_HEATER = 'invert_heater'
 CONF_SENSOR = "target_sensor"
+CONF_TOGGLE_HEATER = "toggle_heater"
 CONF_OUTDOOR_SENSOR = "outdoor_sensor"
 CONF_MIN_TEMP = "min_temp"
 CONF_MAX_TEMP = "max_temp"
@@ -127,6 +128,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
         vol.Required(CONF_HEATER): cv.entity_id,
         vol.Required(CONF_INVERT_HEATER, default=False): cv.boolean,
         vol.Required(CONF_SENSOR): cv.entity_id,
+        vol.Optional(CONF_TOGGLE_HEATER): cv.entity_id,
         vol.Optional(CONF_OUTDOOR_SENSOR): cv.entity_id,
         vol.Optional(CONF_AC_MODE): cv.boolean,
         vol.Optional(CONF_MAX_TEMP): vol.Coerce(float),
@@ -199,6 +201,7 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
         'heater_entity_id': config.get(CONF_HEATER),
         'invert_heater': config.get(CONF_INVERT_HEATER),
         'sensor_entity_id': config.get(CONF_SENSOR),
+        'toggle_heater_entity_id': config.get(CONF_TOGGLE_HEATER),
         'ext_sensor_entity_id': config.get(CONF_OUTDOOR_SENSOR),
         'min_temp': config.get(CONF_MIN_TEMP),
         'max_temp': config.get(CONF_MAX_TEMP),
@@ -288,6 +291,7 @@ class SmartThermostat(ClimateEntity, RestoreEntity):
         self._heater_entity_id = kwargs.get('heater_entity_id')
         self._heater_polarity_invert = kwargs.get('invert_heater')
         self._sensor_entity_id = kwargs.get('sensor_entity_id')
+        self._toggle_heater_entity_id = kwargs.get('toggle_heater_entity_id')
         self._ext_sensor_entity_id = kwargs.get('ext_sensor_entity_id')
         if self._unique_id == 'none':
             self._unique_id = slugify(f"{DOMAIN}_{self._name}_{self._heater_entity_id}")
@@ -396,6 +400,8 @@ class SmartThermostat(ClimateEntity, RestoreEntity):
             async_track_state_change(self.hass, self._ext_sensor_entity_id,
                                      self._async_ext_sensor_changed)
         async_track_state_change(self.hass, self._heater_entity_id, self._async_switch_changed)
+        if self._toggle_heater_entity_id is not None:
+            async_track_state_change(self.hass, self._toggle_heater_entity_id, self._async_switch_changed)
 
         if self._keep_alive:
             async_track_time_interval(self.hass, self._async_control_heating, self._keep_alive)
@@ -874,9 +880,14 @@ class SmartThermostat(ClimateEntity, RestoreEntity):
     @property
     def _is_device_active(self):
         """If the toggleable device is currently active."""
-        if self._heater_polarity_invert:
-            return self.hass.states.is_state(self._heater_entity_id, STATE_OFF)
-        return self.hass.states.is_state(self._heater_entity_id, STATE_ON)
+        if self._toggle_heater_entity_id is not None:
+            if self._heater_polarity_invert:
+                return self.hass.states.is_state(self._toggle_heater_entity_id, STATE_OFF)
+            return self.hass.states.is_state(self._toggle_heater_entity_id, STATE_ON)
+        else:
+            if self._heater_polarity_invert:
+                return self.hass.states.is_state(self._heater_entity_id, STATE_OFF)
+            return self.hass.states.is_state(self._heater_entity_id, STATE_ON)
 
     @property
     def supported_features(self):
