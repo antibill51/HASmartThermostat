@@ -20,6 +20,7 @@ DEFAULT_PRESET_SYNC_MODE = "none"
 
 CONF_HEATER = "heater"
 CONF_INVERT_HEATER = 'invert_heater'
+CONF_TOGGLE_HEATER = "toggle_heater"
 CONF_SENSOR = "target_sensor"
 CONF_OUTDOOR_SENSOR = "outdoor_sensor"
 CONF_MIN_TEMP = "min_temp"
