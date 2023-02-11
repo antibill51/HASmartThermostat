@@ -1,19 +1,14 @@
 """Adds support for smart (PID) thermostat units.
 For more details about this platform, please refer to the documentation at
 https://github.com/ScratMan/HASmartThermostat"""
-https://github.com/ScratMan/HASmartThermostat"""
 
 import asyncio
 import logging
 import time
 from abc import ABC
-from abc import ABC
 
 import voluptuous as vol
 
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers import condition, entity_platform
-from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import condition, entity_platform
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
@@ -37,11 +32,6 @@ from homeassistant.components.number.const import (
     SERVICE_SET_VALUE,
     DOMAIN as NUMBER_DOMAIN
 )
-from homeassistant.components.number.const import (
-    ATTR_VALUE,
-    SERVICE_SET_VALUE,
-    DOMAIN as NUMBER_DOMAIN
-)
 from homeassistant.core import DOMAIN as HA_DOMAIN, callback
 from homeassistant.util import slugify
 import homeassistant.helpers.config_validation as cv
@@ -54,11 +44,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 
 from homeassistant.components.climate import PLATFORM_SCHEMA, ClimateEntity, ClimateEntityFeature
 from homeassistant.components.climate import (
-from homeassistant.components.climate import PLATFORM_SCHEMA, ClimateEntity, ClimateEntityFeature
-from homeassistant.components.climate import (
     ATTR_PRESET_MODE,
-    HVACMode,
-    HVACAction,
     HVACMode,
     HVACAction,
     PRESET_AWAY,
@@ -72,8 +58,6 @@ from homeassistant.components.climate import (
 )
 
 from . import DOMAIN, PLATFORMS
-from . import const
-from . import pid_controller
 from . import const
 from . import pid_controller
 
@@ -99,38 +83,21 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
         vol.Optional(const.CONF_MIN_CYCLE_DURATION, default=const.DEFAULT_MIN_CYCLE_DURATION):
             vol.All(cv.time_period, cv.positive_timedelta),
         vol.Optional(const.CONF_MIN_OFF_CYCLE_DURATION): vol.All(
-        vol.Optional(const.CONF_TARGET_TEMP): vol.Coerce(float),
-        vol.Optional(const.CONF_HOT_TOLERANCE, default=const.DEFAULT_TOLERANCE): vol.Coerce(float),
-        vol.Optional(const.CONF_COLD_TOLERANCE, default=const.DEFAULT_TOLERANCE): vol.Coerce(
-            float),
-        vol.Optional(const.CONF_MIN_CYCLE_DURATION, default=const.DEFAULT_MIN_CYCLE_DURATION):
-            vol.All(cv.time_period, cv.positive_timedelta),
-        vol.Optional(const.CONF_MIN_OFF_CYCLE_DURATION): vol.All(
             cv.time_period, cv.positive_timedelta),
         vol.Optional(const.CONF_MIN_CYCLE_DURATION_PID_OFF): vol.All(
-        vol.Optional(const.CONF_MIN_CYCLE_DURATION_PID_OFF): vol.All(
             cv.time_period, cv.positive_timedelta),
-        vol.Optional(const.CONF_MIN_OFF_CYCLE_DURATION_PID_OFF): vol.All(
         vol.Optional(const.CONF_MIN_OFF_CYCLE_DURATION_PID_OFF): vol.All(
             cv.time_period, cv.positive_timedelta),
         vol.Required(const.CONF_KEEP_ALIVE): vol.All(cv.time_period, cv.positive_timedelta),
         vol.Optional(const.CONF_SAMPLING_PERIOD, default=const.DEFAULT_SAMPLING_PERIOD): vol.All(
-        vol.Required(const.CONF_KEEP_ALIVE): vol.All(cv.time_period, cv.positive_timedelta),
-        vol.Optional(const.CONF_SAMPLING_PERIOD, default=const.DEFAULT_SAMPLING_PERIOD): vol.All(
             cv.time_period, cv.positive_timedelta),
         vol.Optional(const.CONF_SENSOR_STALL, default=const.DEFAULT_SENSOR_STALL): vol.All(
-        vol.Optional(const.CONF_SENSOR_STALL, default=const.DEFAULT_SENSOR_STALL): vol.All(
             cv.time_period, cv.positive_timedelta),
-        vol.Optional(const.CONF_OUTPUT_SAFETY, default=const.DEFAULT_OUTPUT_SAFETY): vol.Coerce(
-            float),
-        vol.Optional(const.CONF_INITIAL_HVAC_MODE): vol.In(
-            [HVACMode.COOL, HVACMode.HEAT, HVACMode.OFF]
         vol.Optional(const.CONF_OUTPUT_SAFETY, default=const.DEFAULT_OUTPUT_SAFETY): vol.Coerce(
             float),
         vol.Optional(const.CONF_INITIAL_HVAC_MODE): vol.In(
             [HVACMode.COOL, HVACMode.HEAT, HVACMode.OFF]
         ),
-        vol.Optional(const.CONF_PRESET_SYNC_MODE, default=const.DEFAULT_PRESET_SYNC_MODE): vol.In(
         vol.Optional(const.CONF_PRESET_SYNC_MODE, default=const.DEFAULT_PRESET_SYNC_MODE): vol.In(
             ['sync', 'none']
         ),
@@ -142,26 +109,11 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
         vol.Optional(const.CONF_SLEEP_TEMP): vol.Coerce(float),
         vol.Optional(const.CONF_ACTIVITY_TEMP): vol.Coerce(float),
         vol.Optional(const.CONF_PRECISION): vol.In(
-        vol.Optional(const.CONF_AWAY_TEMP): vol.Coerce(float),
-        vol.Optional(const.CONF_ECO_TEMP): vol.Coerce(float),
-        vol.Optional(const.CONF_BOOST_TEMP): vol.Coerce(float),
-        vol.Optional(const.CONF_COMFORT_TEMP): vol.Coerce(float),
-        vol.Optional(const.CONF_HOME_TEMP): vol.Coerce(float),
-        vol.Optional(const.CONF_SLEEP_TEMP): vol.Coerce(float),
-        vol.Optional(const.CONF_ACTIVITY_TEMP): vol.Coerce(float),
-        vol.Optional(const.CONF_PRECISION): vol.In(
             [PRECISION_TENTHS, PRECISION_HALVES, PRECISION_WHOLE]
         ),
         vol.Optional(const.CONF_TARGET_TEMP_STEP): vol.In(
-        vol.Optional(const.CONF_TARGET_TEMP_STEP): vol.In(
             [PRECISION_TENTHS, PRECISION_HALVES, PRECISION_WHOLE]
         ),
-        vol.Optional(const.CONF_DIFFERENCE, default=const.DEFAULT_DIFFERENCE): vol.Coerce(float),
-        vol.Optional(const.CONF_KP, default=const.DEFAULT_KP): vol.Coerce(float),
-        vol.Optional(const.CONF_KI, default=const.DEFAULT_KI): vol.Coerce(float),
-        vol.Optional(const.CONF_KD, default=const.DEFAULT_KD): vol.Coerce(float),
-        vol.Optional(const.CONF_KE, default=const.DEFAULT_KE): vol.Coerce(float),
-        vol.Optional(const.CONF_PWM, default=const.DEFAULT_PWM): vol.All(
         vol.Optional(const.CONF_DIFFERENCE, default=const.DEFAULT_DIFFERENCE): vol.Coerce(float),
         vol.Optional(const.CONF_KP, default=const.DEFAULT_KP): vol.Coerce(float),
         vol.Optional(const.CONF_KI, default=const.DEFAULT_KI): vol.Coerce(float),
@@ -170,12 +122,6 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
         vol.Optional(const.CONF_PWM, default=const.DEFAULT_PWM): vol.All(
             cv.time_period, cv.positive_timedelta
         ),
-        vol.Optional(const.CONF_BOOST_PID_OFF, default=False): cv.boolean,
-        vol.Optional(const.CONF_AUTOTUNE, default=const.DEFAULT_AUTOTUNE): cv.string,
-        vol.Optional(const.CONF_NOISEBAND, default=const.DEFAULT_NOISEBAND): vol.Coerce(float),
-        vol.Optional(const.CONF_LOOKBACK, default=const.DEFAULT_LOOKBACK): vol.All(
-            cv.time_period, cv.positive_timedelta),
-        vol.Optional(const.CONF_DEBUG, default=False): cv.boolean,
         vol.Optional(const.CONF_BOOST_PID_OFF, default=False): cv.boolean,
         vol.Optional(const.CONF_AUTOTUNE, default=const.DEFAULT_AUTOTUNE): cv.string,
         vol.Optional(const.CONF_NOISEBAND, default=const.DEFAULT_NOISEBAND): vol.Coerce(float),
@@ -227,17 +173,16 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
         'precision': config.get(const.CONF_PRECISION),
         'target_temp_step': config.get(const.CONF_TARGET_TEMP_STEP),
         'unit': hass.config.units.temperature_unit,
-        'difference': config.get(const.const.CONF_DIFFERENCE),
-        'kp': config.get(const.const.CONF_KP),
-        'ki': config.get(const.const.CONF_KI),
-        'kd': config.get(const.const.CONF_KD),
-        'ke': config.get(const.const.CONF_KE),
-        'pwm': config.get(const.const.CONF_PWM),
-        'boost_pid_off': config.get(const.const.CONF_BOOST_PID_OFF),
-        'autotune': config.get(const.const.CONF_AUTOTUNE),
-        'noiseband': config.get(const.const.CONF_NOISEBAND),
-        'lookback': config.get(const.const.CONF_LOOKBACK),
-        const.CONF_DEBUG: config.get(const.CONF_DEBUG),
+        'difference': config.get(const.CONF_DIFFERENCE),
+        'kp': config.get(const.CONF_KP),
+        'ki': config.get(const.CONF_KI),
+        'kd': config.get(const.CONF_KD),
+        'ke': config.get(const.CONF_KE),
+        'pwm': config.get(const.CONF_PWM),
+        'boost_pid_off': config.get(const.CONF_BOOST_PID_OFF),
+        'autotune': config.get(const.CONF_AUTOTUNE),
+        'noiseband': config.get(const.CONF_NOISEBAND),
+        'lookback': config.get(const.CONF_LOOKBACK),
         const.CONF_DEBUG: config.get(const.CONF_DEBUG),
     }
 
