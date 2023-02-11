@@ -46,10 +46,10 @@ climate:
     keep_alive:
       seconds: 60
     away_temp: 14
-    kp : 5
-    ki : 0.01
-    kd : 500
-    pwm : 00:15:00
+    kp: 5
+    ki: 0.01
+    kd: 500
+    pwm: 00:15:00
 ```
 
 ## Usage:
@@ -176,28 +176,30 @@ Use this service to set the temperatures for the preset modes. It can be adjuste
 for all preset modes, if a preset mode is not enabled through YAML, it will be enabled. You can use 
 any preset temp parameter available in smart thermostat settings.\
 Please note the value will then be saved in the entity's state in database and restored after 
-restarting Home Assistant, ignoring values in YAML.\
+restarting Home Assistant, ignoring values in YAML. Use the disable options to remove active 
+presets.
 Example:
 ```
 service: smart_thermostat.set_preset_temp
 data:
   away_temp: 14.6
   boost_temp: 22.5
+  home_temp_disable: true
 target:
   entity_id: climate.smart_thermostat_example
 ```
 
 **Clear the integral part:** `smart_thermostat.clear_integral`\
-Use this service to reset the integral part of the PID controller to 0. Useful 
-when tuning the PID gains to quickly test the behavior without waiting the integral to stabilize by 
-itself.
+Use this service to reset the integral part of the PID controller to 0. Useful when tuning the PID 
+gains to quickly test the behavior without waiting the integral to stabilize by itself.
 
 
 ## Parameters:
 * **name** (Optional): Name of the thermostat.
 * **unique_id** (Optional): unique entity_id for the smart thermostat.
-* **heater** (Required): entity_id for heater switch, must be a toggle device. Becomes air 
-* conditioning switch when ac_mode is set to True.
+* **heater** (Required): entity_id for heater control, should be a toggle device or a valve 
+accepting direct input between 0% and 100%. If a valve is used, pwm parameter should be set to 0. 
+Becomes air conditioning switch when ac_mode is set to true.
 * **invert_heater** (Optional): if set to true, inverts the polarity of heater switch (switch is on 
 while idle and off while active). Must be a boolean (defaults to false).
 * **target_sensor** (Required): entity_id for a temperature sensor, target_sensor.state must be 
@@ -213,7 +215,8 @@ in seconds, or time hh:mm:ss.
 * **ke** (Optional): Set outdoor temperature compensation gain (e) control value (float, default 0). 
 * **pwm** (Optional): Set period of the pulse width modulation. If too long, the response time of 
 the thermostat will be too slow, leading to lower accuracy of temperature control. Can be float in 
-seconds or time hh:mm:ss (default 15mn).
+seconds or time hh:mm:ss (default 15mn). Set to 0 when using heater entity with direct input of 
+0/100% values like valves.
 * **min_cycle_duration** (Optional): Set a minimum amount of time that the switch specified in the 
 heater option must be in its current state prior to being switched either off or on (useful to 
 protect boilers). Can be float in seconds or time hh:mm:ss (default 0s).
@@ -286,13 +289,48 @@ mode due to unresponsive temperature sensor. This can help to keep a minimum tem
 room in case of sensor failure. The value should be a float between 0.0 and 100.0 (default 5.0).
 * **initial_hvac_mode** (Optional): Forces the operation mode after Home Assistant is restarted. If 
 not specified, the thermostat will restore the previous operation mode.
+* **debug** (Optional): Make the climate entity expose the following internal values as extra 
+states attributes, so they can be accessed in HA with sensor templates for debugging purposes (
+helpful to adjust the PID gains), example:
+  ```
+  - platform: template
+      sensors:
+        smart_thermostat_output:
+          friendly_name: PID Output
+          unit_of_measurement: "%"
+          value_template: "{{ state_attr('climate.smart_thermostat_example', 'control_output') | float }}"
+        smart_thermostat_p:
+          friendly_name: PID P
+          unit_of_measurement: "%"
+          value_template: "{{ state_attr('climate.smart_thermostat_example', 'pid_p') | float }}"
+        smart_thermostat_i:
+          friendly_name: PID I
+          unit_of_measurement: "%"
+          value_template: "{{ state_attr('climate.smart_thermostat_example', 'pid_i') | float }}"
+        smart_thermostat_d:
+          friendly_name: PID D
+          unit_of_measurement: "%"
+          value_template: "{{ state_attr('climate.smart_thermostat_example', 'pid_d') | float }}"
+        smart_thermostat_e:
+          friendly_name: PID E
+          unit_of_measurement: "%"
+          value_template: "{{ state_attr('climate.smart_thermostat_example', 'pid_e') | float }}"
+  ```
+  It is strongly recommended to disable the debug mode once the 
+  PID Thermostat is working fine, as the added extra states attributes will fill the Home Assistant 
+  database quickly.\
+  Available debug attributes are:
+    * `pid_p`
+    * `pid_i`
+    * `pid_d`
+    * `pid_e`
+    * `pid_dt`
 * **noiseband** (Optional): set noiseband for autotune (float): Determines by how much the input 
 value must overshoot/undershoot the set point before the state changes (default : 0.5).
 * **lookback** (Optional): length of the autotune buffer for the signal analysis to detect peaks, 
 can be float in seconds, or time hh:mm:ss (default 2 hours).
 * **autotune** (Optional): Set the name of the selected rule for autotune settings (ie 
 "ziegler-nichols"). If it's not set, autotune is disabled. The following tuning_rules are available:
-
 ruler | Kp_divisor, Ki_divisor, Kd_divisor
 ------------ | -------------
 "ziegler-nichols" | 34, 40, 160
