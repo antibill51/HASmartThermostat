@@ -69,7 +69,6 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
         vol.Required(const.CONF_HEATER): cv.entity_id,
         vol.Required(const.CONF_INVERT_HEATER, default=False): cv.boolean,
         vol.Required(const.CONF_SENSOR): cv.entity_id,
-        vol.Optional(const.CONF_TOGGLE_HEATER): cv.entity_id,
         vol.Optional(const.CONF_OUTDOOR_SENSOR): cv.entity_id,
         vol.Optional(const.CONF_AC_MODE): cv.boolean,
         vol.Optional(const.CONF_MAX_TEMP): vol.Coerce(float),
@@ -241,6 +240,7 @@ class SmartThermostat(ClimateEntity, RestoreEntity, ABC):
         self._name = kwargs.get('name')
         self._unique_id = kwargs.get('unique_id')
         self._heater_entity_id = kwargs.get('heater_entity_id')
+        self._toggle_heater_entity_id = kwargs.get('toggle_heater_entity_id')
         self._heater_polarity_invert = kwargs.get('invert_heater')
         self._sensor_entity_id = kwargs.get('sensor_entity_id')
         self._ext_sensor_entity_id = kwargs.get('ext_sensor_entity_id')
@@ -891,9 +891,14 @@ class SmartThermostat(ClimateEntity, RestoreEntity, ABC):
     @property
     def _is_device_active(self):
         """If the toggleable device is currently active."""
-        if self._heater_polarity_invert:
-            return self.hass.states.is_state(self._heater_entity_id, STATE_OFF)
-        return self.hass.states.is_state(self._heater_entity_id, STATE_ON)
+        if self._toggle_heater_entity_id is not None:
+            if self._heater_polarity_invert:
+                return self.hass.states.is_state(self._toggle_heater_entity_id, STATE_OFF)
+            return self.hass.states.is_state(self._toggle_heater_entity_id, STATE_ON)
+        else:
+            if self._heater_polarity_invert:
+                return self.hass.states.is_state(self._heater_entity_id, STATE_OFF)
+            return self.hass.states.is_state(self._heater_entity_id, STATE_ON)
 
     @property
     def supported_features(self):
