@@ -68,6 +68,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
         vol.Required(const.CONF_HEATER): cv.entity_id,
         vol.Required(const.CONF_INVERT_HEATER, default=False): cv.boolean,
+        vol.Optional(const.CONF_TOGGLE_HEATER): cv.entity_id,
         vol.Required(const.CONF_SENSOR): cv.entity_id,
         vol.Optional(const.CONF_OUTDOOR_SENSOR): cv.entity_id,
         vol.Optional(const.CONF_AC_MODE): cv.boolean,
@@ -374,6 +375,15 @@ class SmartThermostat(ClimateEntity, RestoreEntity, ABC):
                 self.hass,
                 self._heater_entity_id,
                 self._async_switch_changed))
+
+        if self._toggle_heater_entity_id is not None:
+            self.async_on_remove(
+                async_track_state_change(
+                    self.hass,
+                    self._toggle_heater_entity_id,
+                    self._async_switch_changed))
+
+
         if self._keep_alive:
             self.async_on_remove(
                 async_track_time_interval(
