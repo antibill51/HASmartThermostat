@@ -69,6 +69,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
         vol.Required(const.CONF_HEATER): cv.entity_id,
         vol.Required(const.CONF_INVERT_HEATER, default=False): cv.boolean,
         vol.Required(const.CONF_SENSOR): cv.entity_id,
+        vol.Optional(const.CONF_TOGGLE_HEATER): cv.entity_id,
         vol.Optional(const.CONF_OUTDOOR_SENSOR): cv.entity_id,
         vol.Optional(const.CONF_AC_MODE): cv.boolean,
         vol.Optional(const.CONF_MAX_TEMP): vol.Coerce(float),
