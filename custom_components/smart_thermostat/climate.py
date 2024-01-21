@@ -967,15 +967,15 @@ class SmartThermostat(ClimateEntity, RestoreEntity, ABC):
 
     @property
     def _is_device_active(self):
-        """If the toggleable device is currently active."""
-        if self._toggle_heater_entity_id is not None:
-            if self._heater_polarity_invert:
-                return self.hass.states.is_state(self._toggle_heater_entity_id, STATE_OFF)
-            return self.hass.states.is_state(self._toggle_heater_entity_id, STATE_ON)
-        else:
+        if self._pwm:
+            """If the toggleable device is currently active."""
             if self._heater_polarity_invert:
                 return self.hass.states.is_state(self.heater_or_cooler_entity, STATE_OFF)
             return self.hass.states.is_state(self.heater_or_cooler_entity, STATE_ON)
+        else:
+            """If the valve device is currently active."""
+            return float(self.hass.states.get(self.heater_or_cooler_entity).state) > 0
+      
     @property
     def supported_features(self):
         """Return the list of supported features."""
