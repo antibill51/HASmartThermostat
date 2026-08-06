@@ -515,6 +515,16 @@ class SmartThermostat(ClimateEntity, RestoreEntity, ABC):
     def _get_number_entity_domain(entity_id):
         return INPUT_NUMBER_DOMAIN if "input_number" in entity_id else NUMBER_DOMAIN
 
+    @staticmethod
+    def _is_toggle_entity_domain(entity_id):
+        """Return True if the entity is driven with a plain ON/OFF toggle
+        (switch, input_boolean, or any other domain compatible with the generic
+        homeassistant.turn_on / homeassistant.turn_off services).
+        Returns False for entities that must be driven with a numeric or
+        positional service instead (number, input_number, valve, light)."""
+        domain = entity_id.split('.')[0]
+        return domain not in (NUMBER_DOMAIN, INPUT_NUMBER_DOMAIN, VALVE_DOMAIN, LIGHT_DOMAIN)
+
     @property
     def precision(self):
         """Return the precision of the system."""
@@ -925,18 +935,20 @@ class SmartThermostat(ClimateEntity, RestoreEntity, ABC):
 
     @property
     def _is_device_active(self):
-        if self._pwm:
-            """If the toggleable device is currently active."""
-            expected = STATE_ON
-            if self._heater_polarity_invert:
-                expected = STATE_OFF
-            return any([self.hass.states.is_state(heater_or_cooler_entity, expected) for heater_or_cooler_entity
-                        in self.heater_or_cooler_entity])
-        else:
-            """If the valve device is currently active."""
-            is_active = False
-            try:  # do not throw an error if the state is not yet available on startup
-                for heater_or_cooler_entity in self.heater_or_cooler_entity:
+        """Return True if any controlled entity is currently active.
+
+        Applies regardless of PWM mode: toggle entities (switch, input_boolean, ...)
+        are checked via their ON/OFF state, while numeric/positional entities
+        (number, input_number, valve, light) are checked via their current value.
+        """
+        is_active = False
+        try:  # do not throw an error if the state is not yet available on startup
+            for heater_or_cooler_entity in self.heater_or_cooler_entity:
+                if self._is_toggle_entity_domain(heater_or_cooler_entity):
+                    expected = STATE_OFF if self._heater_polarity_invert else STATE_ON
+                    if self.hass.states.is_state(heater_or_cooler_entity, expected):
+                        is_active = True
+                else:
                     state = self.hass.states.get(heater_or_cooler_entity).state
                     try:
                         value = float(state)
@@ -945,9 +957,9 @@ class SmartThermostat(ClimateEntity, RestoreEntity, ABC):
                     except ValueError:
                         if state in ['on', 'open']:
                             is_active = True
-                return is_active
-            except:
-                return False
+            return is_active
+        except:
+            return False
 
     @property
     def supported_features(self):
@@ -976,12 +988,18 @@ class SmartThermostat(ClimateEntity, RestoreEntity, ABC):
                          self.entity_id, ", ".join([entity for entity in self.heater_or_cooler_entity]))
             return
         for heater_or_cooler_entity in self.heater_or_cooler_entity:
-            data = {ATTR_ENTITY_ID: heater_or_cooler_entity}
-            if self._heater_polarity_invert:
-                service = SERVICE_TURN_OFF
+            if self._is_toggle_entity_domain(heater_or_cooler_entity):
+                data = {ATTR_ENTITY_ID: heater_or_cooler_entity}
+                if self._heater_polarity_invert:
+                    service = SERVICE_TURN_OFF
+                else:
+                    service = SERVICE_TURN_ON
+                await self.hass.services.async_call(HA_DOMAIN, service, data)
             else:
-                service = SERVICE_TURN_ON
-            await self.hass.services.async_call(HA_DOMAIN, service, data)
+                # number / input_number / valve / light: emulate "ON" with the
+                # high end of the output range (or the low end if polarity inverted)
+                on_value = self._output_min if self._heater_polarity_invert else self._output_max
+                await self._async_set_entity_value(heater_or_cooler_entity, on_value)
 
     async def _async_heater_turn_off(self, force=False):
         """Turn heater toggleable device off."""
@@ -1001,35 +1019,46 @@ class SmartThermostat(ClimateEntity, RestoreEntity, ABC):
             if entity is None:
                 continue
             for heater_or_cooler_entity in self.heater_or_cooler_entity:
-                data = {ATTR_ENTITY_ID: heater_or_cooler_entity}
-                if self._heater_polarity_invert:
-                    service = SERVICE_TURN_ON
+                if self._is_toggle_entity_domain(heater_or_cooler_entity):
+                    data = {ATTR_ENTITY_ID: heater_or_cooler_entity}
+                    if self._heater_polarity_invert:
+                        service = SERVICE_TURN_ON
+                    else:
+                        service = SERVICE_TURN_OFF
+                    await self.hass.services.async_call(HA_DOMAIN, service, data)
                 else:
-                    service = SERVICE_TURN_OFF
-                await self.hass.services.async_call(HA_DOMAIN, service, data)
+                    # number / input_number / valve / light: emulate "OFF" with the
+                    # low end of the output range (or the high end if polarity inverted)
+                    off_value = self._output_max if self._heater_polarity_invert else self._output_min
+                    await self._async_set_entity_value(heater_or_cooler_entity, off_value)
+
+    async def _async_set_entity_value(self, heater_or_cooler_entity: str, value: float):
+        """Drive a single non-toggle entity (light, valve, number or input_number)
+        with the appropriate service call for its domain."""
+        if heater_or_cooler_entity[0:6] == 'light.':
+            data = {ATTR_ENTITY_ID: heater_or_cooler_entity, ATTR_BRIGHTNESS_PCT: value}
+            await self.hass.services.async_call(
+                LIGHT_DOMAIN,
+                SERVICE_TURN_LIGHT_ON,
+                data)
+        elif heater_or_cooler_entity[0:6] == 'valve.':
+            data = {ATTR_ENTITY_ID: heater_or_cooler_entity, ATTR_POSITION: value}
+            await self.hass.services.async_call(
+                VALVE_DOMAIN,
+                SERVICE_SET_VALVE_POSITION,
+                data)
+        else:
+            data = {ATTR_ENTITY_ID: heater_or_cooler_entity, ATTR_VALUE: value}
+            await self.hass.services.async_call(
+                self._get_number_entity_domain(heater_or_cooler_entity),
+                SERVICE_SET_VALUE,
+                data)
 
     async def _async_set_valve_value(self, value: float):
         _LOGGER.info("%s: Change state of %s to %s", self.entity_id,
                      ", ".join([entity for entity in self.heater_or_cooler_entity]), value)
         for heater_or_cooler_entity in self.heater_or_cooler_entity:
-            if heater_or_cooler_entity[0:6] == 'light.':
-                data = {ATTR_ENTITY_ID: heater_or_cooler_entity, ATTR_BRIGHTNESS_PCT: value}
-                await self.hass.services.async_call(
-                    LIGHT_DOMAIN,
-                    SERVICE_TURN_LIGHT_ON,
-                    data)
-            elif heater_or_cooler_entity[0:6] == 'valve.':
-                data = {ATTR_ENTITY_ID: heater_or_cooler_entity, ATTR_POSITION: value}
-                await self.hass.services.async_call(
-                    VALVE_DOMAIN,
-                    SERVICE_SET_VALVE_POSITION,
-                    data)
-            else:
-                data = {ATTR_ENTITY_ID: heater_or_cooler_entity, ATTR_VALUE: value}
-                await self.hass.services.async_call(
-                    self._get_number_entity_domain(heater_or_cooler_entity),
-                    SERVICE_SET_VALUE,
-                    data)
+            await self._async_set_entity_value(heater_or_cooler_entity, value)
 
     async def async_set_preset_mode(self, preset_mode: str):
         """Set new preset mode.
