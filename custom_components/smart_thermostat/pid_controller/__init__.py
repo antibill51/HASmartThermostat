@@ -1,7 +1,7 @@
-import math
 import logging
-from time import time
+import math
 from collections import deque, namedtuple
+from time import time
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -12,16 +12,16 @@ class PID:
     error: float
 
     def __init__(
-            self,
-            kp,
-            ki,
-            kd,
-            ke=0,
-            out_min=float("-inf"),
-            out_max=float("+inf"),
-            sampling_period=0,
-            cold_tolerance=0.3,
-            hot_tolerance=0.3,
+        self,
+        kp,
+        ki,
+        kd,
+        ke=0,
+        out_min=float("-inf"),
+        out_max=float("+inf"),
+        sampling_period=0,
+        cold_tolerance=0.3,
+        hot_tolerance=0.3,
     ):
         """A proportional-integral-derivative controller.
         :param kp: Proportional coefficient.
@@ -67,6 +67,7 @@ class PID:
         self._input_time = None
         self._last_input = None
         self._last_input_time = None
+        self._last_error = None
         self._error = 0
         self._input_diff = 0
         self._dext = 0
@@ -148,17 +149,19 @@ class PID:
         if ke is not None and isinstance(ke, (int, float)):
             self._Ke = ke
 
-    def clear_samples(self):
+    def clear_samples(self, clear_integral=False):
         """Clear the samples values and timestamp to restart PID from clean state after
         a switch off of the thermostat."""
         self._input = None
         self._input_time = None
         self._last_input = None
         self._last_input_time = None
-        self._integral = 0.0
+        self._last_error = None
+        if clear_integral:
+            self._integral = 0.0
 
     def calc(
-            self, input_val, set_point, input_time=None, last_input_time=None, ext_temp=None
+        self, input_val, set_point, input_time=None, last_input_time=None, ext_temp=None
     ):
         """Adjusts and holds the given setpoint.
 
@@ -204,8 +207,8 @@ class PID:
         else:
             self._input_diff = 0
         if (
-                self._last_input_time is not None
-                and self._input_time > self._last_input_time
+            self._last_input_time is not None
+            and self._input_time > self._last_input_time
         ):
             self._dt = self._input_time - self._last_input_time
         else:
@@ -218,16 +221,27 @@ class PID:
         # Feedforward compensation value for external temperature
         self._external = self._Ke * self._dext
 
-        # Anti-windup clamping: only integrate if output is not saturated
-        saturated_high = self._last_output >= self._out_max
-        saturated_low = self._last_output <= self._out_min
-        pushing_deeper = (saturated_high and self._error > 0) or (
-                saturated_low and self._error < 0
+        # Anti-windup clamping: evaluate saturation on total output (including external compensation)
+        total_last_output = self._last_output + self._external
+        saturated_high = total_last_output >= self._out_max
+        saturated_low = total_last_output <= self._out_min
+
+        # Neutral point for the integral is -self._external (so that I + E = 0 when P = D = 0)
+        neutral_i = -self._external
+        winding_up_high = (
+            saturated_high and self._error > 0 and self._integral >= neutral_i
+        )
+        winding_up_low = (
+            saturated_low and self._error < 0 and self._integral <= neutral_i
         )
 
-        if not pushing_deeper and self._dt > 0:
-            self._integral += self._Ki * self._error * self._dt
-
+        if not (winding_up_high or winding_up_low) and self._dt > 0:
+            if self._last_error is not None:
+                # Trapezoidal rule (#329): average error over the elapsed interval
+                effective_error = 0.5 * (self._error + self._last_error)
+            else:
+                effective_error = self._error
+            self._integral += self._Ki * effective_error * self._dt
         if self._Ki:
             # Clamp integral term taking external compensation into account
             i_min = self._out_min - self._external
@@ -245,6 +259,7 @@ class PID:
 
         # Compute raw PID Output (downstream climate component handles final output clamping)
         self._output = self._proportional + self._integral + self._derivative
+        self._last_error = self._error
         return self._output, True
 
 
@@ -287,13 +302,13 @@ class PIDAutotune:
     }
 
     def __init__(
-            self,
-            out_step=10,
-            lookback=60,
-            out_min=float("-inf"),
-            out_max=float("inf"),
-            noiseband=0.5,
-            time_func=time,
+        self,
+        out_step=10,
+        lookback=60,
+        out_min=float("-inf"),
+        out_max=float("inf"),
+        noiseband=0.5,
+        time_func=time,
     ):
         if out_step < 1:
             raise ValueError("out_step must be greater or equal to 1")
@@ -418,21 +433,21 @@ class PIDAutotune:
         ]:
             self._init_tuner(input_val, now)
         elif (
-                now - self._last_run_timestamp
+            now - self._last_run_timestamp
         ) < self._sampletime - 0.90:  # keep a 10% margin
             return False
 
         # check input and change relay state if necessary
         if (
-                self._state == PIDAutotune.STATE_RELAY_STEP_UP
-                and input_val > self._setpoint + self._noiseband
+            self._state == PIDAutotune.STATE_RELAY_STEP_UP
+            and input_val > self._setpoint + self._noiseband
         ):
             self._state = PIDAutotune.STATE_RELAY_STEP_DOWN
             _LOGGER.debug("switched state: %s", self._state)
             _LOGGER.debug("input: %.1f", input_val)
         elif (
-                self._state == PIDAutotune.STATE_RELAY_STEP_DOWN
-                and input_val < self._setpoint - self._noiseband
+            self._state == PIDAutotune.STATE_RELAY_STEP_DOWN
+            and input_val < self._setpoint - self._noiseband
         ):
             self._state = PIDAutotune.STATE_RELAY_STEP_UP
             _LOGGER.debug("switched state: %s", self._state)
@@ -531,8 +546,8 @@ class PIDAutotune:
 
                 # check convergence criterion for amplitude of induced oscillation
                 amplitude_dev = (
-                                        0.5 * (abs_max - abs_min) - self._induced_amplitude
-                                ) / self._induced_amplitude
+                    0.5 * (abs_max - abs_min) - self._induced_amplitude
+                ) / self._induced_amplitude
 
                 _LOGGER.debug("amplitude: %.2f", self._induced_amplitude)
                 _LOGGER.debug("amplitude deviation: %.2f", amplitude_dev)

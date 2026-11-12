@@ -1,31 +1,28 @@
 """Tests for the Smart Thermostat climate platform."""
 
-from datetime import timedelta
 import csv
 import math
-from pathlib import Path
-import pytest
+from datetime import timedelta
 
+import pytest
 from homeassistant.components.climate import (
     ATTR_TEMPERATURE,
-    DOMAIN as CLIMATE_DOMAIN,
-    SERVICE_SET_HVAC_MODE,
-    SERVICE_SET_TEMPERATURE,
     ClimateEntity,
     ClimateEntityFeature,
     HVACMode,
 )
+from homeassistant.components.climate import (
+    DOMAIN as CLIMATE_DOMAIN,
+)
 from homeassistant.core import State
 from homeassistant.setup import async_setup_component
-from pytest_homeassistant_custom_component.common import mock_restore_cache
+from pytest_homeassistant.common import mock_restore_cache
 
+from custom_components.smart_thermostat.climate import SmartThermostat
 from custom_components.smart_thermostat.const import DOMAIN
 
-
-@pytest.fixture(autouse=True)
-def auto_enable_custom_integrations(enable_custom_integrations):
-    """Enable custom integrations for testing in Home Assistant."""
-    yield
+# Home Assistant 2026.11 renamed the temperature properties and _attr_ shorthands
+HAS_NATIVE_TEMPERATURE = hasattr(ClimateEntity, "native_temperature_unit")
 
 
 @pytest.fixture(autouse=True)
@@ -45,6 +42,28 @@ async def setup_switch_handler(hass):
 
     hass.services.async_register("switch", "turn_on", _async_handle_switch_service)
     hass.services.async_register("switch", "turn_off", _async_handle_switch_service)
+
+
+def test_temperature_properties_follow_home_assistant_api():
+    """Temperature properties use the names the running Home Assistant defines."""
+    deprecated = (
+        "temperature_unit",
+        "current_temperature",
+        "target_temperature",
+    )
+    native = (
+        "native_temperature_unit",
+        "native_current_temperature",
+        "native_target_temperature",
+    )
+    for name in native:
+        assert name in vars(SmartThermostat)
+    if HAS_NATIVE_TEMPERATURE:
+        for name in deprecated:
+            assert name not in vars(SmartThermostat)
+    else:
+        for name in deprecated:
+            assert name in vars(SmartThermostat)
 
 
 async def test_restore_state_pid_i_and_gains(hass):
@@ -174,10 +193,10 @@ async def test_proportional_valve_position(hass):
 
     assert last_position == 50
     assert (
-            hass.states.get("climate.proportional_valve_thermostat").attributes[
-                "control_output"
-            ]
-            == 50
+        hass.states.get("climate.proportional_valve_thermostat").attributes[
+            "control_output"
+        ]
+        == 50
     )
 
 
@@ -367,18 +386,19 @@ async def test_thermal_simulation_closed_loop(hass, freezer, tmp_path):
 class DummyTRV(ClimateEntity):
     """Slave thermostatic valve entity receiving setpoints from the Master Thermostat."""
 
+    _attr_native_target_temperature = 17.0
+    _attr_native_temperature_unit = "°C"
+
     def __init__(self, entity_id="climate.slave_trv"):
         """Initialize the dummy TRV entity."""
         self.entity_id = entity_id
         self._attr_name = "Slave TRV"
         self._attr_hvac_mode = HVACMode.HEAT
         self._attr_hvac_modes = [HVACMode.HEAT, HVACMode.OFF]
-        self._attr_target_temperature = 17.0
-        self._attr_temperature_unit = "°C"
         self._attr_supported_features = (
-                ClimateEntityFeature.TARGET_TEMPERATURE
-                | ClimateEntityFeature.TURN_OFF
-                | ClimateEntityFeature.TURN_ON
+            ClimateEntityFeature.TARGET_TEMPERATURE
+            | ClimateEntityFeature.TURN_OFF
+            | ClimateEntityFeature.TURN_ON
         )
 
     @property
@@ -387,14 +407,23 @@ class DummyTRV(ClimateEntity):
         return self._attr_hvac_mode
 
     @property
-    def target_temperature(self):
+    def native_target_temperature(self):
         """Return target temperature setpoint."""
-        return self._attr_target_temperature
+        return self._attr_native_target_temperature
+
+    @property
+    def native_temperature_unit(self):
+        """Return the temperature unit."""
+        return self._attr_native_temperature_unit
+
+    if not HAS_NATIVE_TEMPERATURE:
+        target_temperature = native_target_temperature
+        temperature_unit = native_temperature_unit
 
     async def async_set_temperature(self, **kwargs):
         """Dynamically update target temperature setpoint received from Master."""
         if ATTR_TEMPERATURE in kwargs:
-            self._attr_target_temperature = float(kwargs[ATTR_TEMPERATURE])
+            self._attr_native_target_temperature = float(kwargs[ATTR_TEMPERATURE])
             self.async_write_ha_state()
 
     async def async_set_hvac_mode(self, hvac_mode):
@@ -478,7 +507,7 @@ async def test_thermal_simulation_climate_closed_loop(hass, freezer, tmp_path):
         )
 
         # Master setpoint updated on slave TRV entity
-        slave_target_temp = slave_trv.target_temperature or 0.0
+        slave_target_temp = slave_trv.native_target_temperature or 0.0
 
         # Local TRV sensor reading with dynamic offset
         trv_sensor_temp = room_temp + trv_offset
@@ -546,3 +575,82 @@ async def test_thermal_simulation_climate_closed_loop(hass, freezer, tmp_path):
         writer.writerows(simulation_data)
 
     assert output_path.exists()
+
+
+async def test_integral_memory_across_hvac_mode_transitions(hass, freezer):
+    """Test preserving integral on HEAT -> OFF -> HEAT (e.g. open window) and clearing on HEAT -> OFF -> COOL."""
+    hass.states.async_set("sensor.temperature", "19.0")
+    hass.states.async_set("switch.heater", "off")
+    hass.states.async_set("switch.cooler", "off")
+
+    config = {
+        CLIMATE_DOMAIN: {
+            "platform": DOMAIN,
+            "name": "Memory Test Thermostat",
+            "heater": ["switch.heater"],
+            "cooler": ["switch.cooler"],
+            "target_sensor": "sensor.temperature",
+            "target_temp": 20.0,
+            "initial_hvac_mode": HVACMode.HEAT,
+            "kp": 10.0,
+            "ki": 0.02,
+            "kd": 0.0,
+            "pwm": timedelta(seconds=60),
+            "keep_alive": timedelta(seconds=60),
+            "sampling_period": timedelta(seconds=0),
+        }
+    }
+
+    assert await async_setup_component(hass, CLIMATE_DOMAIN, config)
+    await hass.async_block_till_done()
+
+    entity_id = "climate.memory_test_thermostat"
+
+    # 1. Accumulate integral in HEAT mode (+1.0°C error over 500s -> pid_i = 10.0)
+    freezer.tick(timedelta(seconds=500))
+    hass.states.async_set("sensor.temperature", "19.0001")
+    await hass.async_block_till_done()
+
+    state = hass.states.get(entity_id)
+    assert state.attributes["pid_i"] == pytest.approx(10.0, abs=0.05)
+
+    # 2. Switch to OFF (simulating open-window automation)
+    await hass.services.async_call(
+        CLIMATE_DOMAIN,
+        "set_hvac_mode",
+        {"entity_id": entity_id, "hvac_mode": HVACMode.OFF},
+        blocking=True,
+    )
+    state = hass.states.get(entity_id)
+    assert state.state == HVACMode.OFF
+    assert state.attributes["pid_i"] == pytest.approx(10.0, abs=0.05)
+
+    # 3. Advance time while OFF and resume HEAT (window closed)
+    # Integral memory must be preserved and the OFF duration must not be integrated
+    freezer.tick(timedelta(seconds=300))
+    await hass.services.async_call(
+        CLIMATE_DOMAIN,
+        "set_hvac_mode",
+        {"entity_id": entity_id, "hvac_mode": HVACMode.HEAT},
+        blocking=True,
+    )
+    state = hass.states.get(entity_id)
+    assert state.state == HVACMode.HEAT
+    assert state.attributes["pid_i"] == pytest.approx(10.0, abs=0.05)
+
+    # 4. Switch to OFF then COOL (indirect direction change: HEAT -> OFF -> COOL)
+    await hass.services.async_call(
+        CLIMATE_DOMAIN,
+        "set_hvac_mode",
+        {"entity_id": entity_id, "hvac_mode": HVACMode.OFF},
+        blocking=True,
+    )
+    await hass.services.async_call(
+        CLIMATE_DOMAIN,
+        "set_hvac_mode",
+        {"entity_id": entity_id, "hvac_mode": HVACMode.COOL},
+        blocking=True,
+    )
+    state = hass.states.get(entity_id)
+    assert state.state == HVACMode.COOL
+    assert state.attributes["pid_i"] == pytest.approx(0.0)
